@@ -86,6 +86,8 @@ pub struct SlackWebApi {
     endpoint: &'static str, paramdata: String
 }
 
+pub type AsyncSlackApiSender = mpsc::Sender<SlackWebApi>;
+
 use std::thread::{spawn, JoinHandle};
 use std::sync::mpsc;
 use reqwest::header::{Authorization, Bearer};
@@ -144,13 +146,13 @@ pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
     let rtm::ConnectResponse { url, team, self_, .. } = rtm::connect(api_token).unwrap();
     ws::connect(url, move |sender| {
         let apihandler = AsyncSlackWebApis::run(api_token.to_owned());
-        let logic = L::launch(&self_, &team);
+        let logic = L::launch(apihandler.sender(), &self_, &team);
         SlackRtmHandler { ws_outgoing: sender, logic, apihandler }
     }).unwrap();
 }
 
 #[allow(unused_variables)]
 pub trait SlackBotLogic {
-    fn launch(botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) -> Self;
-    fn on_message(&mut self, api_sender: &mpsc::Sender<SlackWebApi>, text: &str, sender_user_id: &str, timestamp: &str, channel_id: &str) {}
+    fn launch(api: &AsyncSlackApiSender, botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) -> Self;
+    fn on_message(&mut self, api_sender: &AsyncSlackApiSender, text: &str, sender_user_id: &str, timestamp: &str, channel_id: &str) {}
 }
