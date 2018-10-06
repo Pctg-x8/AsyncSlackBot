@@ -27,7 +27,7 @@ pub enum Event<'s> {
 #[derive(Deserialize, Debug)]
 pub struct GenericResult { ok: bool, error: Option<String> }
 
-mod rtm {
+pub mod rtm {
     use reqwest as r;
     #[derive(Deserialize, Debug)]
     pub struct ConnectResponse {
@@ -40,7 +40,7 @@ mod rtm {
         r::get(&format!("https://slack.com/api/rtm.connect?token={}", token))?.json()
     }
 }
-mod reactions {
+pub mod reactions {
     use std::sync::mpsc;
 
     #[derive(Serialize, Debug)]
@@ -56,7 +56,7 @@ mod reactions {
         }).unwrap();
     }
 }
-mod chat {
+pub mod chat {
     use std::sync::mpsc;
 
     #[derive(Serialize, Debug)]
@@ -93,7 +93,7 @@ pub struct AsyncSlackWebApis {
     th: JoinHandle<()>, sender: mpsc::Sender<SlackWebApi>
 }
 impl AsyncSlackWebApis {
-    fn run(tok: String) -> Self {
+    pub fn run(tok: String) -> Self {
         let (s, r) = mpsc::channel();
         let th = spawn(move || {
             let c = reqwest::Client::new();
@@ -121,16 +121,6 @@ impl AsyncSlackWebApis {
     fn sender(&self) -> &mpsc::Sender<SlackWebApi> { &self.sender }
 }
 
-fn main() {
-    let rtm::ConnectResponse { url, team, self_, .. } = rtm::connect(env!("SLACK_API_TOKEN")).unwrap();
-    ws::connect(url, |sender| {
-        let apihandler = AsyncSlackWebApis::run(env!("SLACK_API_TOKEN").to_owned());
-        let mut logic = TestSlackbot::new();
-        logic.on_launch(&self_, &team);
-        SlackRtmHandler { ws_outgoing: sender, logic, apihandler }
-    }).unwrap();
-}
-
 pub struct SlackRtmHandler<Logic: SlackBotLogic> { ws_outgoing: ws::Sender, logic: Logic, apihandler: AsyncSlackWebApis }
 impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic> {
     fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
@@ -150,8 +140,17 @@ impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic> {
     }
 }
 
+pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
+    let rtm::ConnectResponse { url, team, self_, .. } = rtm::connect(api_token).unwrap();
+    ws::connect(url, move |sender| {
+        let apihandler = AsyncSlackWebApis::run(api_token.to_owned());
+        let logic = L::launch(&self_, &team);
+        SlackRtmHandler { ws_outgoing: sender, logic, apihandler }
+    }).unwrap();
+}
+
 #[allow(unused_variables)]
 pub trait SlackBotLogic {
-    fn on_launch(&mut self, botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) {}
+    fn launch(botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) -> Self;
     fn on_message(&mut self, api_sender: &mpsc::Sender<SlackWebApi>, text: &str, sender_user_id: &str, timestamp: &str, channel_id: &str) {}
 }

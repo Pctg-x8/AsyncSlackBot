@@ -1,5 +1,7 @@
-mod lib;
-use lib::*;
+extern crate asyncslackbot;
+
+use asyncslackbot::*;
+use std::sync::mpsc;
 
 pub struct TestSlackbot { mention_header: String }
 impl TestSlackbot {
@@ -8,9 +10,11 @@ impl TestSlackbot {
     }
 }
 impl SlackBotLogic for TestSlackbot {
-    fn on_launch(&mut self, botinfo: &ConnectionAccountInfo, _: &TeamInfo) {
+    fn launch(botinfo: &ConnectionAccountInfo, _: &TeamInfo) -> Self {
         println!("Connecting as {}", botinfo.name);
-        self.mention_header = format!("<@{}>", botinfo.id);
+        TestSlackbot {
+            mention_header: format!("<@{}>", botinfo.id)
+        }
     }
     fn on_message(&mut self, api_sender: &mpsc::Sender<SlackWebApi>, text: &str, sender_user_id: &str, timestamp: &str, channel_id: &str) {
         let text_trimmed = text.trim();
@@ -43,3 +47,5 @@ impl TestSlackbot {
         return None;
     }
 }
+
+fn main() { launch_rtm::<TestSlackbot>(env!("SLACK_API_TOKEN")); }
