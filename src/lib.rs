@@ -20,8 +20,11 @@ pub struct ConnectionAccountInfo { pub id: String, pub name: String }
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all="camelCase")]
 pub enum Event<'s> {
-    Hello,
-    Message { user: &'s str, text: &'s str, ts: &'s str, channel: &'s str }
+    Hello, Message { #[serde(flatten, borrow)] data: MessageEvent<'s> }
+}
+#[derive(Deserialize, Debug)]
+pub struct MessageEvent<'s> {
+    pub user: &'s str, pub text: &'s str, pub ts: &'s str, pub channel: &'s str
 }
 
 #[derive(Deserialize, Debug)]
@@ -131,8 +134,8 @@ impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic> {
             ws::Message::Text(t) => {
                 match serde_json::from_str::<Event>(&t) {
                     Ok(Event::Hello) => println!("Hello!"),
-                    Ok(Event::Message { user, text, ts, channel }) =>
-                        self.logic.on_message(self.apihandler.sender(), text, user, ts, channel),
+                    Ok(Event::Message { data }) =>
+                        self.logic.on_message(self.apihandler.sender(), data),
                     _ => println!("Unknown Event")
                 }
             },
@@ -154,5 +157,5 @@ pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
 #[allow(unused_variables)]
 pub trait SlackBotLogic {
     fn launch(api: &AsyncSlackApiSender, botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) -> Self;
-    fn on_message(&mut self, api_sender: &AsyncSlackApiSender, text: &str, sender_user_id: &str, timestamp: &str, channel_id: &str) {}
+    fn on_message(&mut self, api_sender: &AsyncSlackApiSender, event: MessageEvent) {}
 }
