@@ -11,6 +11,7 @@ extern crate colored;
 use reqwest as r;
 use colored::*;
 use serde_json::to_string as jsonify;
+use std::borrow::Cow;
 
 #[derive(Deserialize, Debug)]
 pub struct TeamInfo { pub id: String, pub name: String, pub domain: String }
@@ -24,7 +25,7 @@ pub enum Event<'s> {
 }
 #[derive(Deserialize, Debug)]
 pub struct MessageEvent<'s> {
-    pub user: &'s str, pub text: &'s str, pub ts: &'s str, pub channel: &'s str
+    pub user: &'s str, pub text: Cow<'s, str>, pub ts: &'s str, pub channel: &'s str
 }
 
 #[derive(Deserialize, Debug)]
