@@ -84,6 +84,29 @@ pub mod chat {
         }).unwrap();
     }
 }
+pub mod conversations {
+    use std::sync::mpsc;
+
+    #[derive(Serialize, Debug)]
+    pub struct HistoryParams<'s> {
+        pub channel: &'s str, limit: usize, inclusive: bool,
+        pub latest: Option<&'s str>, pub oldest: Option<&'s str>, pub unreads: bool
+    }
+    impl<'s> Default for HistoryParams<'s> {
+        fn default() -> Self {
+            HistoryParams {
+                channel: "", limit: 100, inclusive: false, latest: None, oldest: None, unreads: false
+            }
+        }
+    }
+    
+    pub fn history(api: &::AsyncSlackApiSender, params: HistoryParams) {
+        api.send(super::SlackWebApi {
+            endpoint: "https://slack.com/api/conversations.history",
+            paramdata: super::jsonify(&params).unwrap()
+        }).unwrap();
+    }
+}
 
 #[derive(Debug)]
 pub struct SlackWebApi {
