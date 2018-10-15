@@ -45,48 +45,48 @@ pub mod rtm {
     }
 }
 pub mod reactions {
-    use std::sync::mpsc;
-
     #[derive(Serialize, Debug)]
     pub struct AddRequestParams<'s> {
         pub name: &'s str,
         pub channel: &'s str, pub timestamp: &'s str
     }
-
-    pub fn add(api: &mpsc::Sender<super::SlackWebApi>, param: AddRequestParams) {
-        api.send(super::SlackWebApi {
-            endpoint: "https://slack.com/api/reactions.add",
-            paramdata: super::jsonify(&param).unwrap()
-        }).unwrap();
+    impl<'s> super::SlackWebAPI for AddRequestParams<'s> {
+        const EP: &'static str = "https://slack.com/api/reactions.add";
     }
 }
 pub mod chat {
-    use std::sync::mpsc;
+    use std::borrow::Cow;
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct Attachment<'s> {
+        pub color: Option<Cow<'s, str>>, pub text: Option<Cow<'s, str>>
+    }
+    impl<'s> Default for Attachment<'s> {
+        fn default() -> Self {
+            Attachment { color: None, text: None }
+        }
+    }
 
     #[derive(Serialize, Debug)]
     pub struct PostMessageParams<'s> {
         pub channel: &'s str, pub text: &'s str,
-        pub as_user: Option<bool>, pub icon_emoji: Option<&'s str>, pub icon_url: Option<&'s str>, pub username: Option<&'s str>
+        pub as_user: Option<bool>, pub icon_emoji: Option<&'s str>, pub icon_url: Option<&'s str>, pub username: Option<&'s str>,
+        pub attachments: Vec<Attachment<'s>>
     }
     impl<'s> Default for PostMessageParams<'s> {
         fn default() -> Self {
             PostMessageParams {
                 channel: "", text: "",
-                as_user: None, icon_emoji: None, icon_url: None, username: None
+                as_user: None, icon_emoji: None, icon_url: None, username: None,
+                attachments: Vec::new()
             }
         }
     }
-
-    pub fn post_message(api: &mpsc::Sender<super::SlackWebApi>, param: PostMessageParams) {
-        api.send(super::SlackWebApi {
-            endpoint: "https://slack.com/api/chat.postMessage",
-            paramdata: super::jsonify(&param).unwrap()
-        }).unwrap();
+    impl<'s> super::SlackWebAPI for PostMessageParams<'s> {
+        const EP: &'static str = "https://slack.com/api/chat.postMessage";
     }
 }
 pub mod conversations {
-    use std::sync::mpsc;
-
     #[derive(Serialize, Debug)]
     pub struct HistoryParams<'s> {
         pub channel: &'s str, limit: usize, inclusive: bool,
@@ -99,36 +99,43 @@ pub mod conversations {
             }
         }
     }
-    
-    pub fn history(api: &::AsyncSlackApiSender, params: HistoryParams) {
-        api.send(super::SlackWebApi {
-            endpoint: "https://slack.com/api/conversations.history",
-            paramdata: super::jsonify(&params).unwrap()
-        }).unwrap();
+    impl<'s> super::SlackWebAPI for HistoryParams<'s> {
+        const EP: &'static str = "https://slack.com/api/conersations.history";
     }
 }
 
 #[derive(Debug)]
-pub struct SlackWebApi {
+pub struct SlackWebApiCall {
     endpoint: &'static str, paramdata: String
 }
+pub trait SlackWebAPI: serde::Serialize {
+    const EP: &'static str;
 
-pub type AsyncSlackApiSender = mpsc::Sender<SlackWebApi>;
+    fn to_apicall(&self) -> SlackWebApiCall {
+        SlackWebApiCall { endpoint: Self::EP, paramdata: jsonify(self).unwrap() }
+    }
+}
+pub struct AsyncSlackApiSender(mpsc::Sender<SlackWebApiCall>);
+impl AsyncSlackApiSender {
+    pub fn send<P: SlackWebAPI + ?Sized>(&self, params: &P) {
+        self.0.send(params.to_apicall()).expect("Failed to send SlackWebAPICall");
+    }
+}
 
 use std::thread::{spawn, JoinHandle};
 use std::sync::mpsc;
 use reqwest::header::{Authorization, Bearer};
 pub struct AsyncSlackWebApis {
-    th: JoinHandle<()>, sender: mpsc::Sender<SlackWebApi>
+    _th: JoinHandle<()>, sender: AsyncSlackApiSender
 }
 impl AsyncSlackWebApis {
     pub fn run(tok: String) -> Self {
         let (s, r) = mpsc::channel();
-        let th = spawn(move || {
+        let _th = spawn(move || {
             let c = reqwest::Client::new();
             loop {
                 match r.recv() {
-                    Ok(SlackWebApi { endpoint, paramdata }) => {
+                    Ok(SlackWebApiCall { endpoint, paramdata }) => {
                         trace!("{}: {:?} {:?}", "Posting".bright_white().bold(), endpoint, paramdata);
                         let mut headers = r::header::Headers::new();
                         headers.set(Authorization(Bearer { token: tok.clone() }));
@@ -145,9 +152,9 @@ impl AsyncSlackWebApis {
                 }
             }
         });
-        return AsyncSlackWebApis { th, sender: s }
+        return AsyncSlackWebApis { _th, sender: AsyncSlackApiSender(s) }
     }
-    fn sender(&self) -> &mpsc::Sender<SlackWebApi> { &self.sender }
+    fn sender(&self) -> &AsyncSlackApiSender { &self.sender }
 }
 
 pub struct SlackRtmHandler<Logic: SlackBotLogic> { ws_outgoing: ws::Sender, logic: Logic, apihandler: AsyncSlackWebApis }

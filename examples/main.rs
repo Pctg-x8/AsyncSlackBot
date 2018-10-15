@@ -1,7 +1,6 @@
 extern crate asyncslackbot;
 
 use asyncslackbot::*;
-use std::sync::mpsc;
 
 pub struct TestSlackbot { mention_header: String }
 impl TestSlackbot {
