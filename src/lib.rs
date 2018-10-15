@@ -115,6 +115,7 @@ pub trait SlackWebAPI: serde::Serialize {
         SlackWebApiCall { endpoint: Self::EP, paramdata: jsonify(self).unwrap() }
     }
 }
+#[derive(Clone)]
 pub struct AsyncSlackApiSender(mpsc::Sender<SlackWebApiCall>);
 impl AsyncSlackApiSender {
     pub fn send<P: SlackWebAPI + ?Sized>(&self, params: &P) {
@@ -157,7 +158,7 @@ impl AsyncSlackWebApis {
     fn sender(&self) -> &AsyncSlackApiSender { &self.sender }
 }
 
-pub struct SlackRtmHandler<Logic: SlackBotLogic> { ws_outgoing: ws::Sender, logic: Logic, apihandler: AsyncSlackWebApis }
+pub struct SlackRtmHandler<Logic: SlackBotLogic> { _ws_outgoing: ws::Sender, logic: Logic, apihandler: AsyncSlackWebApis }
 impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic> {
     fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
         println!("Incoming Message from SlackRtm: {:?}", msg);
@@ -181,7 +182,7 @@ pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
     ws::connect(url, move |sender| {
         let apihandler = AsyncSlackWebApis::run(api_token.to_owned());
         let logic = L::launch(apihandler.sender(), &self_, &team);
-        SlackRtmHandler { ws_outgoing: sender, logic, apihandler }
+        SlackRtmHandler { _ws_outgoing: sender, logic, apihandler }
     }).unwrap();
 }
 
