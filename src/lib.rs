@@ -39,7 +39,7 @@ pub mod rtm {
         pub team: super::TeamInfo,
         #[serde(rename = "self")] pub self_: super::ConnectionAccountInfo
     }
-    #[derive(Deserialize, Debug)] pub enum ConnectResponseResult {
+    #[derive(Deserialize, Debug)] #[serde(untagged)] pub enum ConnectResponseResult {
         Ok { ok: bool, url: String, team: super::TeamInfo, #[serde(rename = "self")] self_: super::ConnectionAccountInfo },
         Err { ok: bool, error: String }
     }
