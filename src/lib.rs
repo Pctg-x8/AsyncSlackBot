@@ -39,8 +39,12 @@ pub mod rtm {
         pub team: super::TeamInfo,
         #[serde(rename = "self")] pub self_: super::ConnectionAccountInfo
     }
+    #[derive(Deserialize, Debug)] pub enum ConnectResponseResult {
+        Ok { ok: bool, url: String, team: super::TeamInfo, #[serde(rename = "self")] self_: super::ConnectionAccountInfo },
+        Err { ok: bool, error: String }
+    }
 
-    pub fn connect(token: &str) -> r::Result<ConnectResponse> {
+    pub fn connect(token: &str) -> r::Result<ConnectResponseResult> {
         r::get(&format!("https://slack.com/api/rtm.connect?token={}", token))?.json()
     }
 }
@@ -178,12 +182,17 @@ impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic> {
 }
 
 pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
-    let rtm::ConnectResponse { url, team, self_, .. } = rtm::connect(api_token).unwrap();
-    ws::connect(url, move |sender| {
-        let apihandler = AsyncSlackWebApis::run(api_token.to_owned());
-        let logic = L::launch(apihandler.sender(), &self_, &team);
-        SlackRtmHandler { _ws_outgoing: sender, logic, apihandler }
-    }).unwrap();
+    let con = rtm::connect(api_token).unwrap();
+    match con {
+        rtm::ConnectResponseResult::Ok { url, team, self_, .. } => {
+            ws::connect(url, move |sender| {
+                let apihandler = AsyncSlackWebApis::run(api_token.to_owned());
+                let logic = L::launch(apihandler.sender(), &self_, &team);
+                SlackRtmHandler { _ws_outgoing: sender, logic, apihandler }
+            }).unwrap();
+        },
+        rtm::ConnectResponseResult::Err { error, .. } => panic!("Error connecting SlackRTM: {}", error)
+    }
 }
 
 #[allow(unused_variables)]
