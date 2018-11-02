@@ -25,7 +25,7 @@ pub enum Event<'s> {
 }
 #[derive(Deserialize, Debug)]
 pub struct MessageEvent<'s> {
-    pub user: &'s str, pub text: Cow<'s, str>, pub ts: &'s str, pub channel: &'s str, pub subtype: &'s str
+    pub user: &'s str, pub text: Cow<'s, str>, pub ts: &'s str, pub channel: &'s str, pub subtype: Option<&'s str>
 }
 
 #[derive(Deserialize, Debug)]
