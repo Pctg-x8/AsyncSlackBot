@@ -31,7 +31,8 @@ pub struct MessageEvent<'s> {
 #[derive(Deserialize, Debug)]
 pub struct GenericResult { ok: bool, error: Option<String> }
 
-pub mod rtm {
+pub mod rtm
+{
     use reqwest as r;
     #[derive(Deserialize, Debug)]
     pub struct ConnectResponse {
@@ -44,13 +45,16 @@ pub mod rtm {
         Err { ok: bool, error: String }
     }
 
-    pub fn connect(token: &str) -> r::Result<ConnectResponseResult> {
-        r::get(&format!("https://slack.com/api/rtm.connect?token={}", token))?.json()
+    pub async fn connect(token: &str) -> r::Result<ConnectResponseResult>
+    {
+        r::get(&format!("https://slack.com/api/rtm.connect?token={}", token)).await?.json().await
     }
 }
-pub mod reactions {
+pub mod reactions
+{
     #[derive(Serialize, Debug)]
-    pub struct AddRequestParams<'s> {
+    pub struct AddRequestParams<'s>
+    {
         pub name: &'s str,
         pub channel: &'s str, pub timestamp: &'s str
     }
@@ -109,86 +113,93 @@ pub mod conversations {
 }
 
 #[derive(Debug)]
-pub struct SlackWebApiCall {
+pub struct SlackWebApiCall
+{
     endpoint: &'static str, paramdata: String
 }
-pub trait SlackWebAPI: serde::Serialize {
+pub trait SlackWebAPI: serde::Serialize
+{
     const EP: &'static str;
 
-    fn to_apicall(&self) -> SlackWebApiCall {
+    fn to_apicall(&self) -> SlackWebApiCall
+    {
         SlackWebApiCall { endpoint: Self::EP, paramdata: jsonify(self).unwrap() }
     }
+    fn to_post_request(&self, tok: &str) -> r::Request
+    {
+        let mut req = r::Request::new(r::Method::POST, r::Url::parse(Self::EP).expect("invalid url"));
+        req.headers_mut()
+            .insert(r::header::CONTENT_TYPE, r::header::HeaderValue::from_static("application/json"));
+        req.headers_mut()
+            .insert(r::header::AUTHORIZATION, r::header::HeaderValue::from_str(&format!("Bearer {}", tok)).unwrap());
+        *req.body_mut() = Some(r::Body::from(jsonify(self).unwrap()));
+
+        req
+    }
 }
-#[derive(Clone)]
-pub struct AsyncSlackApiSender(mpsc::Sender<SlackWebApiCall>);
+pub struct AsyncSlackApiSender {
+    pub tok: String
+}
 impl AsyncSlackApiSender {
-    pub fn send<P: SlackWebAPI + ?Sized>(&self, params: &P) {
-        self.0.send(params.to_apicall()).expect("Failed to send SlackWebAPICall");
+    pub fn new(tok: String) -> Self {
+        AsyncSlackApiSender { tok }
+    }
+    
+    pub async fn send(&self, callinfo: SlackWebApiCall)
+    {
+        trace!("{}: {:?} {:?}", "Posting".bright_white().bold(), callinfo.endpoint, callinfo.paramdata);
+        let resp = r::Client::new().post(callinfo.endpoint)
+            .bearer_auth(self.tok.clone())
+            .header(r::header::CONTENT_TYPE, "application/json")
+            .body(callinfo.paramdata)
+            .send().await;
+        
+        match resp
+        {
+            Ok(req) =>
+            {
+                let e = req.json::<GenericResult>().await.expect("Converting MethodResult");
+                if !e.ok { eprintln!("Err: Invalid Request? {:?}", e.error.unwrap()); }
+            },
+            Err(e) => eprintln!("Err in Requesting: {:?}", e)
+        }
     }
 }
 
-use std::thread::{spawn, JoinHandle};
-use std::sync::mpsc;
-use reqwest::header::{Authorization, Bearer};
-pub struct AsyncSlackWebApis {
-    _th: JoinHandle<()>, sender: AsyncSlackApiSender
+pub struct SlackRtmHandler<Logic: SlackBotLogic>
+{
+    _ws_outgoing: ws::Sender, logic: Logic
 }
-impl AsyncSlackWebApis {
-    pub fn run(tok: String) -> Self {
-        let (s, r) = mpsc::channel();
-        let _th = spawn(move || {
-            let c = reqwest::Client::new();
-            loop {
-                match r.recv() {
-                    Ok(SlackWebApiCall { endpoint, paramdata }) => {
-                        trace!("{}: {:?} {:?}", "Posting".bright_white().bold(), endpoint, paramdata);
-                        let mut headers = r::header::Headers::new();
-                        headers.set(Authorization(Bearer { token: tok.clone() }));
-                        headers.set(r::header::ContentType::json());
-                        match c.post(endpoint).headers(headers).body(paramdata).send() {
-                            Ok(mut req) => {
-                                let e = req.json::<GenericResult>().expect("Converting MethodResult");
-                                if !e.ok { eprintln!("Err: Invalid Request? {:?}", e.error.unwrap()); }
-                            },
-                            Err(e) => eprintln!("Err in Requesting: {:?}", e)
-                        }
-                    },
-                    Err(e) => Err(e).unwrap()
-                }
-            }
-        });
-        return AsyncSlackWebApis { _th, sender: AsyncSlackApiSender(s) }
-    }
-    fn sender(&self) -> &AsyncSlackApiSender { &self.sender }
-}
+impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic>
+{
+    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()>
+    {
+        debug!("Incoming Message from SlackRtm: {:?}", msg);
 
-pub struct SlackRtmHandler<Logic: SlackBotLogic> { _ws_outgoing: ws::Sender, logic: Logic, apihandler: AsyncSlackWebApis }
-impl<Logic: SlackBotLogic> ws::Handler for SlackRtmHandler<Logic> {
-    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
-        println!("Incoming Message from SlackRtm: {:?}", msg);
-        match msg {
-            ws::Message::Text(t) => {
-                match serde_json::from_str::<Event>(&t) {
+        match msg
+        {
+            ws::Message::Text(t) =>
+            {
+                match serde_json::from_str::<Event>(&t)
+                {
                     Ok(Event::Hello) => println!("Hello!"),
-                    Ok(Event::Message { data }) =>
-                        self.logic.on_message(self.apihandler.sender(), data),
+                    Ok(Event::Message { data }) => self.logic.on_message(data),
                     _ => println!("Unknown Event")
                 }
             },
             _ => println!("Unsupported WebSocket Message")
         }
-        return Ok(());
+
+        Ok(())
     }
 }
 
-pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
-    let con = rtm::connect(api_token).unwrap();
-    match con {
+pub async fn launch_rtm<L: SlackBotLogic>(api_token: String) {
+    match rtm::connect(&api_token).await.unwrap() {
         rtm::ConnectResponseResult::Ok { url, team, self_, .. } => {
-            ws::connect(url, move |sender| {
-                let apihandler = AsyncSlackWebApis::run(api_token.to_owned());
-                let logic = L::launch(apihandler.sender(), &self_, &team);
-                SlackRtmHandler { _ws_outgoing: sender, logic, apihandler }
+            ws::connect(url, move |sender| SlackRtmHandler {
+                _ws_outgoing: sender,
+                logic: L::launch(AsyncSlackApiSender::new(api_token.clone()), &self_, &team)
             }).unwrap();
         },
         rtm::ConnectResponseResult::Err { error, .. } => panic!("Error connecting SlackRTM: {}", error)
@@ -196,7 +207,9 @@ pub fn launch_rtm<L: SlackBotLogic>(api_token: &str) {
 }
 
 #[allow(unused_variables)]
-pub trait SlackBotLogic {
-    fn launch(api: &AsyncSlackApiSender, botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) -> Self;
-    fn on_message(&mut self, api_sender: &AsyncSlackApiSender, event: MessageEvent) {}
+pub trait SlackBotLogic
+{
+    fn launch(api: AsyncSlackApiSender, botinfo: &ConnectionAccountInfo, teaminfo: &TeamInfo) -> Self;
+
+    fn on_message(&mut self, event: MessageEvent) {}
 }
